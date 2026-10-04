@@ -1,0 +1,376 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>六合彩 7×7 走線圖</title>
+  <style>
+    :root {
+      --cell: 52px;
+      --gap: 4px;
+      --bg: #0f1419;
+      --panel: #1a2332;
+      --text: #e7ecf3;
+      --muted: #8b9cb3;
+      --grid: #2a3548;
+      --accent: #5b9cff;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: "Segoe UI", system-ui, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+    }
+    header {
+      padding: 1rem 1.25rem;
+      border-bottom: 1px solid var(--grid);
+      background: var(--panel);
+    }
+    header h1 { margin: 0 0 0.25rem; font-size: 1.25rem; font-weight: 600; }
+    header p { margin: 0; color: var(--muted); font-size: 0.875rem; }
+    main {
+      display: grid;
+      grid-template-columns: minmax(280px, 360px) 1fr;
+      gap: 1rem;
+      padding: 1rem;
+      align-items: start;
+    }
+    @media (max-width: 900px) {
+      main { grid-template-columns: 1fr; }
+    }
+    .panel {
+      background: var(--panel);
+      border: 1px solid var(--grid);
+      border-radius: 10px;
+      padding: 1rem;
+    }
+    label { display: block; font-size: 0.8rem; color: var(--muted); margin-bottom: 0.35rem; }
+    input[type="range"] { width: 100%; }
+    .row { margin-bottom: 1rem; }
+    .btns { display: flex; flex-wrap: wrap; gap: 0.5rem; }
+    button {
+      background: #243044;
+      border: 1px solid var(--grid);
+      color: var(--text);
+      padding: 0.45rem 0.75rem;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 0.85rem;
+    }
+    button.primary { background: var(--accent); border-color: #3d7fd6; color: #fff; }
+    button:hover { filter: brightness(1.08); }
+    textarea {
+      width: 100%;
+      min-height: 120px;
+      background: #0c1018;
+      border: 1px solid var(--grid);
+      color: var(--text);
+      border-radius: 6px;
+      padding: 0.5rem;
+      font-family: ui-monospace, monospace;
+      font-size: 0.75rem;
+    }
+    .stats { font-size: 0.85rem; color: var(--muted); line-height: 1.5; }
+    .viz-wrap {
+      display: flex;
+      justify-content: center;
+      align-items: flex-start;
+      padding: 0.5rem;
+    }
+    #board {
+      position: relative;
+      width: calc(7 * var(--cell) + 6 * var(--gap));
+    }
+    #grid {
+      display: grid;
+      grid-template-columns: repeat(7, var(--cell));
+      gap: var(--gap);
+    }
+    .cell {
+      width: var(--cell);
+      height: var(--cell);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: #121a26;
+      border: 1px solid var(--grid);
+      border-radius: 8px;
+      font-weight: 600;
+      font-size: 0.95rem;
+      position: relative;
+      z-index: 1;
+      transition: background 0.15s;
+    }
+    .cell.hit { box-shadow: inset 0 0 0 2px var(--accent); }
+    .cell.on-path { background: #1e3a5f; }
+    #overlay {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      pointer-events: none;
+      z-index: 2;
+    }
+    .draw-meta {
+      font-family: ui-monospace, monospace;
+      font-size: 0.9rem;
+      margin-top: 0.5rem;
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>7×7 號碼表 · 開獎走線</h1>
+    <p>號碼 1–49 按行排列；每期 6 個號碼用虛線依序連接（跨行時折向下一格）。</p>
+  </header>
+  <main>
+    <aside class="panel">
+      <div class="row">
+        <label for="drawRange">期次（第 1 期 = 列表第一行）</label>
+        <input id="drawRange" type="range" min="1" max="1" value="1" />
+        <div class="draw-meta" id="drawMeta">—</div>
+      </div>
+      <div class="row">
+        <label for="orderMode">連線順序</label>
+        <select id="orderMode" style="width:100%;padding:0.45rem;border-radius:6px;background:#0c1018;color:var(--text);border:1px solid var(--grid)">
+          <option value="sorted">由小到大（1→2→3…→8 跨行）</option>
+          <option value="listed">列表原始順序</option>
+        </select>
+      </div>
+      <div class="row btns">
+        <button type="button" class="primary" id="btnSingle">只顯示本期</button>
+        <button type="button" id="btnAll">疊加全部期次</button>
+        <button type="button" id="btnHeat">熱力次數</button>
+      </div>
+      <div class="row stats" id="stats"></div>
+      <div class="row">
+        <label for="paste">貼上中獎號碼（每行 6 個數字）</label>
+        <textarea id="paste" placeholder="4,16,21,36,42,46"></textarea>
+        <div class="btns" style="margin-top:0.5rem">
+          <button type="button" id="btnLoadPaste">載入貼上資料</button>
+          <button type="button" id="btnReloadFile">重新載入 data/draws.json</button>
+        </div>
+      </div>
+    </aside>
+    <section class="panel viz-wrap">
+      <div id="board">
+        <svg id="overlay" xmlns="http://www.w3.org/2000/svg"></svg>
+        <div id="grid"></div>
+      </div>
+    </section>
+  </main>
+  <script>
+    const COLS = 7;
+    const ROWS = 7;
+    const cellSize = () => parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--cell"));
+    const gap = () => parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--gap"));
+
+    let draws = [];
+    let mode = "single"; // single | all | heat
+    let currentIndex = 0;
+
+    function numToPixel(n) {
+      const idx = n - 1;
+      const row = Math.floor(idx / COLS);
+      const col = idx % COLS;
+      const cs = cellSize();
+      const g = gap();
+      return {
+        x: col * (cs + g) + cs / 2,
+        y: row * (cs + g) + cs / 2,
+      };
+    }
+
+    function orderDraw(nums) {
+      const mode = document.getElementById("orderMode").value;
+      return mode === "listed" ? [...nums] : [...nums].sort((a, b) => a - b);
+    }
+
+    function buildGrid() {
+      const grid = document.getElementById("grid");
+      grid.innerHTML = "";
+      for (let n = 1; n <= 49; n++) {
+        const el = document.createElement("div");
+        el.className = "cell";
+        el.dataset.num = n;
+        el.textContent = n;
+        grid.appendChild(el);
+      }
+      resizeOverlay();
+    }
+
+    function resizeOverlay() {
+      const board = document.getElementById("board");
+      const svg = document.getElementById("overlay");
+      const cs = cellSize();
+      const g = gap();
+      const w = 7 * cs + 6 * g;
+      const h = 7 * cs + 6 * g;
+      board.style.width = w + "px";
+      board.style.height = h + "px";
+      svg.setAttribute("viewBox", `0 0 ${w} ${h}`);
+      svg.setAttribute("width", w);
+      svg.setAttribute("height", h);
+    }
+
+    function clearHighlights() {
+      document.querySelectorAll(".cell").forEach((c) => {
+        c.classList.remove("hit", "on-path");
+        c.style.background = "";
+      });
+    }
+
+    function pathD(nums) {
+      const pts = orderDraw(nums).map(numToPixel);
+      return pts.map((p, i) => (i === 0 ? `M ${p.x} ${p.y}` : `L ${p.x} ${p.y}`)).join(" ");
+    }
+
+    function render() {
+      clearHighlights();
+      const svg = document.getElementById("overlay");
+      svg.innerHTML = "";
+
+      if (!draws.length) {
+        document.getElementById("drawMeta").textContent = "尚無資料";
+        return;
+      }
+
+      const range = document.getElementById("drawRange");
+      currentIndex = Math.min(Math.max(0, parseInt(range.value, 10) - 1), draws.length - 1);
+      range.value = String(currentIndex + 1);
+
+      const meta = document.getElementById("drawMeta");
+      const ordered = orderDraw(draws[currentIndex]);
+      meta.textContent = `第 ${currentIndex + 1} / ${draws.length} 期 · ${ordered.join(" → ")}`;
+
+      if (mode === "heat") {
+        const freq = new Array(50).fill(0);
+        for (const d of draws) for (const n of d) freq[n]++;
+        const max = Math.max(...freq.slice(1));
+        document.querySelectorAll(".cell").forEach((cell) => {
+          const n = +cell.dataset.num;
+          const f = freq[n];
+          if (f > 0) {
+            const t = f / max;
+            cell.style.background = `rgba(91, 156, 255, ${0.15 + t * 0.65})`;
+            cell.classList.add("hit");
+          }
+        });
+        document.getElementById("stats").textContent = `共 ${draws.length} 期 · 顯示各號出現次數`;
+        return;
+      }
+
+      if (mode === "all") {
+        draws.forEach((d, i) => {
+          const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+          path.setAttribute("d", pathD(d));
+          path.setAttribute("fill", "none");
+          path.setAttribute("stroke", `hsla(${(i * 47) % 360}, 70%, 55%, 0.12)`);
+          path.setAttribute("stroke-width", "1.5");
+          path.setAttribute("stroke-dasharray", "5 4");
+          path.setAttribute("stroke-linecap", "round");
+          path.setAttribute("stroke-linejoin", "round");
+          svg.appendChild(path);
+        });
+        document.getElementById("stats").textContent = `疊加 ${draws.length} 期虛線（半透明）`;
+        return;
+      }
+
+      // single draw
+      const d = draws[currentIndex];
+      orderDraw(d).forEach((n) => {
+        const cell = document.querySelector(`.cell[data-num="${n}"]`);
+        if (cell) cell.classList.add("on-path", "hit");
+      });
+
+      const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+      path.setAttribute("d", pathD(d));
+      path.setAttribute("fill", "none");
+      path.setAttribute("stroke", "#5b9cff");
+      path.setAttribute("stroke-width", "2.5");
+      path.setAttribute("stroke-dasharray", "8 6");
+      path.setAttribute("stroke-linecap", "round");
+      path.setAttribute("stroke-linejoin", "round");
+      svg.appendChild(path);
+
+      orderDraw(d).forEach((n) => {
+        const { x, y } = numToPixel(n);
+        const dot = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+        dot.setAttribute("cx", x);
+        dot.setAttribute("cy", y);
+        dot.setAttribute("r", "5");
+        dot.setAttribute("fill", "#ffb347");
+        dot.setAttribute("stroke", "#1a2332");
+        dot.setAttribute("stroke-width", "1.5");
+        svg.appendChild(dot);
+      });
+
+      document.getElementById("stats").textContent = "虛線依號碼大小順序連接；同一行連續號碼會呈一直線。";
+    }
+
+    function setDraws(list) {
+      draws = list.filter((d) => Array.isArray(d) && d.length === 6);
+      const range = document.getElementById("drawRange");
+      range.max = String(Math.max(1, draws.length));
+      range.min = "1";
+      range.value = "1";
+      currentIndex = 0;
+      render();
+    }
+
+    function parsePaste(text) {
+      const out = [];
+      for (const line of text.split(/\n/)) {
+        const nums = line.split(/[,，\s]+/).map((s) => s.trim()).filter(Boolean).map(Number);
+        if (nums.length === 6 && nums.every((n) => n >= 1 && n <= 49)) out.push(nums);
+      }
+      return out;
+    }
+
+    async function loadJson() {
+      try {
+        const res = await fetch("data/draws.json");
+        if (!res.ok) throw new Error(String(res.status));
+        setDraws(await res.json());
+      } catch (e) {
+        document.getElementById("stats").textContent =
+          "無法載入 data/draws.json，請貼上資料或在本機用 http.server 開啟。";
+      }
+    }
+
+    document.getElementById("drawRange").addEventListener("input", () => {
+      mode = "single";
+      render();
+    });
+    document.getElementById("btnSingle").addEventListener("click", () => {
+      mode = "single";
+      render();
+    });
+    document.getElementById("btnAll").addEventListener("click", () => {
+      mode = "all";
+      render();
+    });
+    document.getElementById("btnHeat").addEventListener("click", () => {
+      mode = "heat";
+      render();
+    });
+    document.getElementById("btnLoadPaste").addEventListener("click", () => {
+      const parsed = parsePaste(document.getElementById("paste").value);
+      if (parsed.length) setDraws(parsed);
+      else alert("未能解析任何一行（每行需 6 個 1–49 的數字）");
+    });
+    document.getElementById("btnReloadFile").addEventListener("click", loadJson);
+    document.getElementById("orderMode").addEventListener("change", render);
+
+    window.addEventListener("resize", () => {
+      resizeOverlay();
+      render();
+    });
+
+    buildGrid();
+    loadJson();
+  </script>
+</body>
+</html>
